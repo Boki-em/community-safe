@@ -1,0 +1,213 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /users/{userId}/contacts/{contactId} {
+
+      function isOwner() {
+        return request.auth != null
+            && request.auth.uid == userId;
+      }
+
+      function validContact() {
+        let data = request.resource.data;
+
+        return data.keys().hasAll(['name', 'phone'])
+            && data.keys().hasOnly(['name', 'phone'])
+            && data.name is string
+            && data.name.size() > 0
+            && data.name.size() <= 100
+            && data.phone is string
+            && data.phone.size() > 0
+            && data.phone.size() <= 25;
+      }
+
+      allow read, delete: if isOwner();
+      allow create, update: if isOwner() && validContact();
+    }
+
+         match /users/{userId}/reports/{reportId} {
+      function isOwner() {
+        return request.auth != null
+            && request.auth.uid == userId;
+      }
+
+      function validReport() {
+        let data = request.resource.data;
+
+        return data.keys().hasAll([
+              'type', 'description', 'location',
+              'status', 'createdAt'
+            ])
+            && data.keys().hasOnly([
+              'type', 'description', 'location',
+              'status', 'createdAt'
+            ])
+            && data.type in [
+              'Harassment',
+              'Violence or threats',
+              'Safety concern',
+              'Other'
+            ]
+            && data.description is string
+            && data.description.size() > 0
+            && data.description.size() <= 2000
+            && data.location is string
+            && data.location.size() > 0
+            && data.location.size() <= 200
+            && data.status == 'saved_only'
+            && data.createdAt == request.time;
+      }
+
+      allow read, delete: if isOwner();
+      allow create: if isOwner() && validReport();
+      allow update: if false;
+    }
+
+    match /users/{userId}/events/{eventId} {
+
+      function isOwner() {
+        return request.auth != null
+            && request.auth.uid == userId;
+      }
+
+      function validTriggerDetails() {
+        let data = request.resource.data;
+
+        return !data.keys().hasAny([
+          'source',
+          'triggeredWhileLocked',
+          'triggeredAtDeviceMillis'
+        ]) || (
+          data.keys().hasAll([
+            'source',
+            'triggeredWhileLocked',
+            'triggeredAtDeviceMillis'
+          ])
+          && data.source == 'quick_settings_tile'
+          && data.triggeredWhileLocked is bool
+          && data.triggeredAtDeviceMillis is int
+          && data.triggeredAtDeviceMillis > 0
+        );
+      }
+
+      function validLocation() {
+        let data = request.resource.data;
+        let loc = data.get('location', {'status': 'unavailable'});
+
+        return loc is map && (
+          (
+            loc.keys().hasOnly(['status'])
+            && loc.status in [
+              'unavailable',
+              'permission_denied',
+              'background_permission_missing',
+              'stale'
+            ]
+          ) || (
+            loc.keys().hasAll([
+              'status',
+              'latitude',
+              'longitude',
+              'accuracyMeters',
+              'capturedAtMillis',
+              'ageAtReadMillis',
+              'source'
+            ])
+            && loc.keys().hasOnly([
+              'status',
+              'latitude',
+              'longitude',
+              'accuracyMeters',
+              'capturedAtMillis',
+              'ageAtReadMillis',
+              'source'
+            ])
+            && loc.status == 'available'
+            && loc.latitude is number
+            && loc.latitude >= -90
+            && loc.latitude <= 90
+            && loc.longitude is number
+            && loc.longitude >= -180
+            && loc.longitude <= 180
+            && loc.accuracyMeters is number
+            && loc.accuracyMeters >= 0
+            && loc.capturedAtMillis is int
+            && loc.capturedAtMillis > 0
+            && loc.ageAtReadMillis is int
+            && loc.ageAtReadMillis >= 0
+            && loc.ageAtReadMillis <= 120000
+            && loc.source in ['current_request', 'cached']
+          )
+        );
+      }
+
+      function validSosEvent() {
+        let data = request.resource.data;
+
+        return data.keys().hasAll([
+              'type', 'status', 'isDemo', 'createdAt'
+            ])
+            && data.keys().hasOnly([
+              'type',
+              'status',
+              'isDemo',
+              'createdAt',
+              'source',
+              'triggeredWhileLocked',
+              'triggeredAtDeviceMillis',
+              'location'
+            ])
+            && data.type == 'sos'
+            && data.status == 'simulated'
+            && data.isDemo == true
+            && data.createdAt == request.time
+            && validTriggerDetails()
+            && validLocation();
+      }
+
+            function validRealSosEvent() {
+        let data = request.resource.data;
+
+        return data.keys().hasAll([
+              'type', 'status', 'isDemo', 'createdAt',
+              'submittedCount', 'failedCount',
+              'locationAvailable', 'deliveryConfirmed'
+            ])
+            && data.keys().hasOnly([
+              'type', 'status', 'isDemo', 'createdAt',
+              'submittedCount', 'failedCount',
+              'locationAvailable', 'deliveryConfirmed'
+            ])
+            && data.type == 'sos'
+            && data.isDemo == false
+            && data.createdAt == request.time
+            && data.submittedCount is int
+            && data.submittedCount >= 0
+            && data.failedCount is int
+            && data.failedCount >= 0
+            && data.submittedCount + data.failedCount > 0
+            && data.locationAvailable is bool
+            && data.deliveryConfirmed == false
+            && (
+              (data.status == 'submission_failed'
+                && data.submittedCount == 0)
+              ||
+              (data.status == 'partially_submitted'
+                && data.submittedCount > 0
+                && data.failedCount > 0)
+              ||
+              (data.status == 'submitted_to_android'
+                && data.submittedCount > 0
+                && data.failedCount == 0)
+            );
+      }
+
+      allow read: if isOwner();
+      allow create: if isOwner()
+          && (validSosEvent() || validRealSosEvent());
+      allow update, delete: if false;
+    }
+  }
+}

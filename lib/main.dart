@@ -245,9 +245,68 @@ class HomeScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF4F7F7),
-      appBar: AppBar(
+        appBar: AppBar(
         title: const Text('Community Safe'),
         centerTitle: true,
+        actions: [
+          IconButton(
+            tooltip: 'Sign out',
+            icon: const Icon(Icons.logout),
+            onPressed: () async {
+              final confirmed = await showDialog<bool>(
+                context: context,
+                builder: (dialogContext) => AlertDialog(
+                  title: const Text('Sign out?'),
+                  content: const Text(
+                    'Your saved reports and SOS history '
+                    'will remain in your account.',
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () =>
+                          Navigator.pop(dialogContext, false),
+                      child: const Text('Cancel'),
+                    ),
+                    FilledButton(
+                      onPressed: () =>
+                          Navigator.pop(dialogContext, true),
+                      child: const Text('Sign out'),
+                    ),
+                  ],
+                ),
+              );
+
+              if (confirmed != true || !context.mounted) return;
+
+              try {
+                await FirebaseAuth.instance.signOut();
+
+                // Clear account-specific lists held in memory.
+                trustedContacts.value = [];
+                demoReports.value = [];
+
+                if (!context.mounted) return;
+
+                Navigator.of(context).pushAndRemoveUntil(
+                  MaterialPageRoute(
+                    builder: (_) => const AuthGate(),
+                  ),
+                  (route) => false,
+                );
+              } catch (_) {
+                if (!context.mounted) return;
+
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text(
+                      'Could not sign out. Please try again.',
+                    ),
+                  ),
+                );
+              }
+            },
+          ),
+        ],
       ),
       body: SafeArea(
         child: SingleChildScrollView(
@@ -285,10 +344,10 @@ class HomeScreen extends StatelessWidget {
                     child: Padding(
                       padding: EdgeInsets.all(16),
                       child: Text(
-                        'Prototype: SOS saves simulated events only. '
-                        'The Send test SMS button sends a real text '
-                        'only after you confirm. SMS charges may apply. '
-                        'No emergency services are contacted.',
+                                                'SOS sends a real SMS to your trusted contacts '
+                                                'after confirmation and a countdown. Your location '
+                                                'is included when available. SMS charges may apply. '
+                                                'Emergency services are not automatically contacted.',
                         textAlign: TextAlign.center,
                       ),
                     ),
@@ -407,21 +466,54 @@ class HomeScreen extends StatelessWidget {
                   ),
                   const SizedBox(height: 16),
 
-                  OutlinedButton.icon(
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) =>
-                              const ReportHistoryScreen(),
+                                    Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) =>
+                                    const ReportHistoryScreen(),
+                              ),
+                            );
+                          },
+                          icon: const Icon(Icons.history),
+                          label: const Text(
+                            'Report history',
+                            textAlign: TextAlign.center,
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            minimumSize: const Size(0, 80),
+                            padding: const EdgeInsets.all(8),
+                          ),
                         ),
-                      );
-                    },
-                    icon: const Icon(Icons.history),
-                    label: const Text('Demo report history'),
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.all(20),
-                    ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) =>
+                                    const SosHistoryScreen(),
+                              ),
+                            );
+                          },
+                          icon: const Icon(Icons.history_rounded),
+                          label: const Text(
+                            'SOS history',
+                            textAlign: TextAlign.center,
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            minimumSize: const Size(0, 80),
+                            padding: const EdgeInsets.all(8),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -447,6 +539,8 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen> {
 
   String? _incidentType;
 
+  bool _isSaving = false;
+
   @override
   void dispose() {
     _descriptionController.dispose();
@@ -454,59 +548,123 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen> {
     super.dispose();
   }
 
-  Future<void> _previewReport() async {
+    Future<void> _previewReport() async {
+    if (_isSaving) return;
     if (!_formKey.currentState!.validate()) return;
 
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Demo report preview'),
-        content: SingleChildScrollView(
-          child: Text(
-            'Type: $_incidentType\n\n'
-            'Description: ${_descriptionController.text.trim()}\n\n'
-            'Location: ${_locationController.text.trim()}\n\n'
-            'This report has not been saved or sent. '
-            'No emergency services or contacts have been notified.',
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please sign in before saving a report.'),
+        ),
+      );
+      return;
+    }
+
+    final type = _incidentType!;
+    final description = _descriptionController.text.trim();
+    final location = _locationController.text.trim();
+
+    setState(() => _isSaving = true);
+
+    try {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Report preview'),
+          content: SingleChildScrollView(
+            child: Text(
+              'Type: $type\n\n'
+              'Description: $description\n\n'
+              'Location: $location\n\n'
+              'Save this report to your account in Firebase? '
+              'It will not be sent to authorities or trusted contacts. '
+              'Reports are not monitored.',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () =>
+                  Navigator.pop(dialogContext, false),
+              child: const Text('Keep editing'),
+            ),
+            FilledButton(
+              onPressed: () =>
+                  Navigator.pop(dialogContext, true),
+              child: const Text('Save to my account'),
+            ),
+          ],
+        ),
+      );
+
+      if (!mounted || confirmed != true) return;
+
+      if (FirebaseAuth.instance.currentUser?.uid != user.uid) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Your account changed. Please reopen the report form.',
+            ),
+          ),
+        );
+        return;
+      }
+
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .collection('reports')
+          .add({
+        'type': type,
+        'description': description,
+        'location': location,
+        'status': 'saved_only',
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      if (!mounted) return;
+
+      final messenger = ScaffoldMessenger.of(context);
+
+      Navigator.pop(context);
+
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Report saved to your account. No one was notified.',
           ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Keep editing'),
-          ),
-          FilledButton(
-            onPressed: () {
-              demoReports.value = [
-                {
-                  'type': _incidentType!,
-                  'description': _descriptionController.text.trim(),
-                  'location': _locationController.text.trim(),
-                  'createdAt': DateTime.now()
-                      .toLocal()
-                      .toString()
-                      .split('.')
-                      .first,
-                },
-                ...demoReports.value,
-              ];
+      );
+    } on FirebaseException catch (error) {
+      if (!mounted) return;
 
-              Navigator.pop(dialogContext);
-              Navigator.pop(context);
-
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text(
-                    'Demo report added to history. Nothing was sent.',
-                  ),
-                ),
-              );
-            },
-            child: const Text('Add to demo history'),
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            error.code == 'permission-denied'
+                ? 'Saving was denied. Check the published report rules.'
+                : 'Could not save the report. Your form is still here.',
           ),
-        ],
-      ),
-    );
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Could not confirm the report was saved. '
+            'Check report history before trying again.',
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isSaving = false);
+      }
+    }
   }
 
   @override
@@ -533,8 +691,9 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen> {
                     ),
                     const SizedBox(height: 12),
                     const Text(
-                      'Demo form: use fictional details. '
-                      'Reports are not saved, sent, or monitored.',
+                      'Save an incident record to your account. '
+                      'Reports are not sent to authorities or monitored. '
+                      'Use fictional details while testing.',
                     ),
                     const SizedBox(height: 24),
                     DropdownButtonFormField<String>(
@@ -605,9 +764,13 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen> {
                     ),
                     const SizedBox(height: 24),
                     FilledButton.icon(
-                      onPressed: _previewReport,
+                      onPressed: _isSaving ? null : _previewReport,
                       icon: const Icon(Icons.preview_outlined),
-                      label: const Text('Preview demo report'),
+                      label: Text(
+                        _isSaving
+                            ? 'Preparing or saving…'
+                            : 'Preview report',
+                      ),
                       style: FilledButton.styleFrom(
                         padding: const EdgeInsets.all(18),
                       ),
@@ -617,78 +780,6 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen> {
               ),
             ),
           ),
-        ),
-      ),
-    );
-  }
-}
-
-class ReportHistoryScreen extends StatelessWidget {
-  const ReportHistoryScreen({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Demo report history')),
-      body: SafeArea(
-        child: Column(
-          children: [
-            const Padding(
-              padding: EdgeInsets.all(16),
-              child: Text(
-                'Demo only. Reports are not sent and disappear '
-                'when the app restarts.',
-                textAlign: TextAlign.center,
-              ),
-            ),
-            Expanded(
-              child: ValueListenableBuilder<List<Map<String, String>>>(
-                valueListenable: demoReports,
-                builder: (context, reports, child) {
-                  if (reports.isEmpty) {
-                    return const Center(child: Text('No demo reports yet.'));
-                  }
-
-                  return ListView.builder(
-                    padding: const EdgeInsets.all(16),
-                    itemCount: reports.length,
-                    itemBuilder: (context, index) {
-                      final report = reports[index];
-
-                      return Card(
-                        child: Padding(
-                          padding: const EdgeInsets.all(16),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                report['type']!,
-                                style: const TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              Text(report['description']!),
-                              const SizedBox(height: 8),
-                              Text('Area: ${report['location']}'),
-                              const SizedBox(height: 8),
-                              Text('Created: ${report['createdAt']}'),
-                              const SizedBox(height: 8),
-                              const Text(
-                                'Demo only — not sent',
-                                style: TextStyle(fontWeight: FontWeight.bold),
-                              ),
-                            ],
-                          ),
-                        ),
-                      );
-                    },
-                  );
-                },
-              ),
-            ),
-          ],
         ),
       ),
     );
@@ -2286,5 +2377,349 @@ class _AccountContactsGateState extends State<AccountContactsGate> {
       );
     }
     return PinGate(userId: widget.userId);
+  }
+}
+
+class SosHistoryScreen extends StatelessWidget {
+  const SosHistoryScreen({super.key});
+
+  String _statusLabel(Map<String, dynamic> event) {
+    if (event['isDemo'] == true ||
+        event['status'] == 'simulated') {
+      return 'Demo — no SMS sent';
+    }
+
+    switch (event['status']) {
+      case 'submitted_to_android':
+        return 'SMS submitted to Android';
+      case 'partially_submitted':
+        return 'Some SMS submissions failed';
+      case 'submission_failed':
+        return 'SMS submission failed';
+      default:
+        return 'Submission status unknown';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF4F7F7),
+      appBar: AppBar(
+        title: const Text('SOS history'),
+      ),
+      body: SafeArea(
+        child: StreamBuilder<User?>(
+          stream: FirebaseAuth.instance.authStateChanges(),
+          initialData: FirebaseAuth.instance.currentUser,
+          builder: (context, authSnapshot) {
+            final user = authSnapshot.data;
+
+            if (user == null) {
+              return const Center(
+                child: Text('Please sign in to view SOS history.'),
+              );
+            }
+
+            return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+              key: ValueKey(user.uid),
+              stream: FirebaseFirestore.instance
+                  .collection('users')
+                  .doc(user.uid)
+                  .collection('events')
+                  .orderBy('createdAt', descending: true)
+                  .limit(100)
+                  .snapshots(includeMetadataChanges: true),
+              builder: (context, snapshot) {
+                if (snapshot.hasError) {
+                  return const Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(24),
+                      child: Text(
+                        'Could not load SOS history. '
+                        'Check your connection and account permissions.',
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  );
+                }
+
+                if (!snapshot.hasData) {
+                  return const Center(
+                    child: CircularProgressIndicator(),
+                  );
+                }
+
+                final query = snapshot.data!;
+                final events = query.docs
+                    .where((doc) => doc.data()['type'] == 'sos')
+                    .toList();
+
+                return Column(
+                  children: [
+                    const Padding(
+                      padding: EdgeInsets.all(16),
+                      child: Text(
+                        'Recent SOS records. Submission to Android '
+                        'does not confirm SMS delivery.',
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                    if (query.metadata.isFromCache)
+                      const Padding(
+                        padding: EdgeInsets.fromLTRB(16, 0, 16, 12),
+                        child: Text(
+                          'Showing cached history. '
+                          'It may not include the latest records.',
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    Expanded(
+                      child: events.isEmpty
+                          ? const Center(
+                              child: Text('No SOS records to show.'),
+                            )
+                          : ListView.builder(
+                              padding: const EdgeInsets.all(16),
+                              itemCount: events.length,
+                              itemBuilder: (context, index) {
+                                final document = events[index];
+                                final event = document.data();
+
+                                final isDemo =
+                                    event['isDemo'] == true ||
+                                    event['status'] == 'simulated';
+
+                                final timestamp = event['createdAt'];
+                                final date = timestamp is Timestamp
+                                    ? timestamp.toDate().toLocal()
+                                    : null;
+
+                                final timeLabel = date == null
+                                    ? 'Time not yet available'
+                                    : '${MaterialLocalizations.of(context).formatMediumDate(date)} '
+                                      '${TimeOfDay.fromDateTime(date).format(context)}';
+
+                                final submitted =
+                                    event['submittedCount'];
+                                final failed = event['failedCount'];
+
+                                final locationLabel =
+                                    event['locationAvailable'] == true
+                                        ? 'Location included'
+                                        : event['locationAvailable'] == false
+                                            ? 'Location unavailable'
+                                            : 'Location status not recorded';
+
+                                return Card(
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(16),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          isDemo
+                                              ? 'Demo SOS'
+                                              : 'SOS attempt',
+                                          style: const TextStyle(
+                                            fontSize: 18,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 8),
+                                        Text(timeLabel),
+                                        const SizedBox(height: 8),
+                                        Text(
+                                          _statusLabel(event),
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                        if (!isDemo) ...[
+                                          const SizedBox(height: 8),
+                                          Text(
+                                            'Submitted to Android: '
+                                            '${submitted is num ? submitted.toInt() : 'Not recorded'}',
+                                          ),
+                                          Text(
+                                            'Submission failures: '
+                                            '${failed is num ? failed.toInt() : 'Not recorded'}',
+                                          ),
+                                          const SizedBox(height: 8),
+                                          Text(locationLabel),
+                                          const SizedBox(height: 8),
+                                          const Text(
+                                            'Delivery not confirmed by this app.',
+                                          ),
+                                        ],
+                                        if (document
+                                            .metadata.hasPendingWrites) ...[
+                                          const SizedBox(height: 8),
+                                          const Text(
+                                            'History sync pending',
+                                          ),
+                                        ],
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                );
+              },
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class ReportHistoryScreen extends StatelessWidget {
+  const ReportHistoryScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Report history')),
+      body: SafeArea(
+        child: StreamBuilder<User?>(
+          stream: FirebaseAuth.instance.authStateChanges(),
+          initialData: FirebaseAuth.instance.currentUser,
+          builder: (context, authSnapshot) {
+            final user = authSnapshot.data;
+
+            if (user == null) {
+              return const Center(
+                child: Text('Please sign in to view your reports.'),
+              );
+            }
+
+            return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+              key: ValueKey(user.uid),
+              stream: FirebaseFirestore.instance
+                  .collection('users')
+                  .doc(user.uid)
+                  .collection('reports')
+                  .orderBy('createdAt', descending: true)
+                  .snapshots(includeMetadataChanges: true),
+              builder: (context, snapshot) {
+                if (snapshot.hasError) {
+                  return const Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(24),
+                      child: Text(
+                        'Could not load reports. Check your connection '
+                        'and the published report rules.',
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  );
+                }
+
+                if (!snapshot.hasData) {
+                  return const Center(
+                    child: CircularProgressIndicator(),
+                  );
+                }
+
+                final query = snapshot.data!;
+                final reports = query.docs;
+
+                return Column(
+                  children: [
+                    const Padding(
+                      padding: EdgeInsets.all(16),
+                      child: Text(
+                        'Reports saved to your account. '
+                        'Not sent to authorities or monitored.',
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                    if (query.metadata.isFromCache)
+                      const Padding(
+                        padding: EdgeInsets.fromLTRB(16, 0, 16, 12),
+                        child: Text(
+                          'Showing cached reports. '
+                          'The latest changes may not appear.',
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    Expanded(
+                      child: reports.isEmpty
+                          ? const Center(
+                              child: Text('No saved reports yet.'),
+                            )
+                          : ListView.builder(
+                              padding: const EdgeInsets.all(16),
+                              itemCount: reports.length,
+                              itemBuilder: (context, index) {
+                                final document = reports[index];
+                                final report = document.data();
+
+                                final timestamp = report['createdAt'];
+                                final date = timestamp is Timestamp
+                                    ? timestamp.toDate().toLocal()
+                                    : null;
+
+                                final timeLabel = date == null
+                                    ? 'Time pending'
+                                    : '${MaterialLocalizations.of(context).formatMediumDate(date)} '
+                                      '${TimeOfDay.fromDateTime(date).format(context)}';
+
+                                return Card(
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(16),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          report['type'] as String? ??
+                                              'Incident',
+                                          style: const TextStyle(
+                                            fontSize: 18,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 8),
+                                        Text(
+                                          report['description']
+                                                  as String? ??
+                                              '',
+                                        ),
+                                        const SizedBox(height: 8),
+                                        Text(
+                                          'Area: ${report['location'] ?? ''}',
+                                        ),
+                                        const SizedBox(height: 8),
+                                        Text('Created: $timeLabel'),
+                                        const SizedBox(height: 8),
+                                        Text(
+                                          document.metadata.hasPendingWrites
+                                              ? 'Waiting to sync'
+                                              : 'Saved to account — not sent',
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                );
+              },
+            );
+          },
+        ),
+      ),
+    );
   }
 }
