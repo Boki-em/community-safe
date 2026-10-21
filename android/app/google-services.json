@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "720647537492",
+    "project_id": "community-safe-a543c",
+    "storage_bucket": "community-safe-a543c.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:720647537492:android:7969c7927158c0da23bec1",
+        "android_client_info": {
+          "package_name": "com.example.community_safe"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCvYcu0eq5Dfkbl6ovX_dQr2e2yOJPu_Tc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
