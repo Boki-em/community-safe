@@ -1,3 +1,4 @@
+import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'package:firebase_core/firebase_core.dart';
@@ -1250,7 +1251,7 @@ class SupportScreen extends StatelessWidget {
                 ),
                 SizedBox(height: 12),
                 Text(
-                  'Explore the types of help available.',
+                  'South African support services',
                   textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 16),
                 ),
@@ -1259,48 +1260,79 @@ class SupportScreen extends StatelessWidget {
                   child: Padding(
                     padding: EdgeInsets.all(16),
                     child: Text(
-                      'Information only. This page does not contact '
-                      'a service. Verified contact details will be '
-                      'added in a later step.',
+                      'Dialler buttons open your phone app. '
+                      'You choose whether to place the call. '
+                      'Your saved reports and location are not '
+                      'automatically shared with these services.',
                       textAlign: TextAlign.center,
                     ),
                   ),
                 ),
                 SizedBox(height: 16),
                 _SupportCategory(
-                  icon: Icons.local_police_outlined,
+                  icon: Icons.emergency_outlined,
                   title: 'Emergency assistance',
                   description:
-                      'Emergency services can help when someone '
-                      'is in immediate danger.',
+                      'For immediate danger or an emergency, '
+                      'dial 112 from a cellphone.',
+                  phone: '112',
+                  website:
+                      'https://www.ekurhuleni.gov.za/'
+                      'press-releases/featured-article/'
+                      'know-your-life-threatening-emergency-services-number/',
+                ),
+                _SupportCategory(
+                  icon: Icons.local_police_outlined,
+                  title: 'Police emergency',
+                  description:
+                      'Contact SAPS on 10111 for a crime emergency.',
+                  phone: '10111',
+                  website:
+                      'https://www.gov.za/services/services-residents/'
+                      'dealing-law/report-crime/how-report-crime',
                 ),
                 _SupportCategory(
                   icon: Icons.volunteer_activism_outlined,
-                  title: 'Gender-based violence support',
+                  title: 'GBV support and counselling',
                   description:
-                      'Specialist services can offer support '
-                      'after abuse, threats, or sexual violence.',
-                ),
-                _SupportCategory(
-                  icon: Icons.chat_bubble_outline,
-                  title: 'Counselling and emotional support',
-                  description:
-                      'A counsellor can help you talk through '
-                      'difficult experiences and explore next steps.',
+                      'The Gender-Based Violence Command Centre '
+                      'offers 24-hour support, trauma counselling '
+                      'and referrals to social workers.',
+                  phone: '0800428428',
+                  displayPhone: '0800 428 428',
+                  website: 'https://gbv.org.za/about-us/',
                 ),
                 _SupportCategory(
                   icon: Icons.home_outlined,
-                  title: 'Shelters and safe accommodation',
+                  title: 'Shelter referrals',
                   description:
-                      'Shelter services may help you find temporary '
-                      'safe accommodation and practical support.',
+                      'Ask the GBV Command Centre about shelter '
+                      'referrals and available support. '
+                      'Accommodation availability must be confirmed '
+                      'with the service.',
+                  phone: '0800428428',
+                  displayPhone: '0800 428 428',
+                  website: 'https://gbv.org.za/about-us/',
                 ),
                 _SupportCategory(
                   icon: Icons.gavel_outlined,
                   title: 'Legal assistance',
                   description:
-                      'Legal support can help explain your rights, '
-                      'protection orders, and reporting options.',
+                      'Contact Legal Aid South Africa for legal '
+                      'advice and information about available assistance.',
+                  phone: '0800110110',
+                  displayPhone: '0800 110 110',
+                  website: 'https://legal-aid.co.za/selfhelp/',
+                ),
+                SizedBox(height: 8),
+                Text(
+                  'Contact details checked against official sources '
+                  'on 21 October 2026. Service details may change.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.black54,
+                  ),
                 ),
               ],
             ),
@@ -1316,11 +1348,43 @@ class _SupportCategory extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.description,
+    required this.phone,
+    required this.website,
+    this.displayPhone,
   });
 
   final IconData icon;
   final String title;
   final String description;
+  final String phone;
+  final String website;
+  final String? displayPhone;
+
+  Future<void> _openLink(
+    BuildContext context,
+    Uri uri,
+  ) async {
+    try {
+      final opened = await launchUrl(uri);
+
+      if (opened) return;
+    } catch (_) {
+      // Show a readable fallback below.
+    }
+
+    if (!context.mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          uri.scheme == 'tel'
+              ? 'Could not open a phone app. '
+                  'Dial ${displayPhone ?? phone} manually.'
+              : 'Could not open the website. Please try again.',
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1350,6 +1414,38 @@ class _SupportCategory extends StatelessWidget {
                   ),
                   const SizedBox(height: 8),
                   Text(description),
+                  const SizedBox(height: 12),
+                  SelectableText(
+                    displayPhone ?? phone,
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF00695C),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      FilledButton.icon(
+                        onPressed: () => _openLink(
+                          context,
+                          Uri(scheme: 'tel', path: phone),
+                        ),
+                        icon: const Icon(Icons.dialpad),
+                        label: const Text('Open dialler'),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: () => _openLink(
+                          context,
+                          Uri.parse(website),
+                        ),
+                        icon: const Icon(Icons.open_in_new),
+                        label: const Text('Official source'),
+                      ),
+                    ],
+                  ),
                 ],
               ),
             ),
@@ -2705,6 +2801,108 @@ class ReportHistoryScreen extends StatelessWidget {
                                           style: const TextStyle(
                                             fontWeight: FontWeight.bold,
                                           ),
+                                        ),
+                                        const SizedBox(height: 12),
+                                        TextButton.icon(
+                                          icon: const Icon(
+                                            Icons.delete_outline,
+                                          ),
+                                          label: const Text('Delete report'),
+                                          style: TextButton.styleFrom(
+                                            foregroundColor:
+                                                const Color(0xFFB3261E),
+                                          ),
+                                          onPressed:
+                                              document.metadata.hasPendingWrites
+                                                  ? null
+                                                  : () async {
+                                              final confirmed =
+                                                  await showDialog<bool>(
+                                                context: context,
+                                                builder: (dialogContext) =>
+                                                    AlertDialog(
+                                                  title: const Text(
+                                                    'Delete report?',
+                                                  ),
+                                                  content: const Text(
+                                                    'This permanently removes '
+                                                    'this report from your '
+                                                    'account. It cannot be undone.',
+                                                  ),
+                                                  actions: [
+                                                    TextButton(
+                                                      onPressed: () =>
+                                                          Navigator.pop(
+                                                        dialogContext,
+                                                        false,
+                                                      ),
+                                                      child: const Text(
+                                                        'Keep report',
+                                                      ),
+                                                    ),
+                                                    FilledButton(
+                                                      onPressed: () =>
+                                                          Navigator.pop(
+                                                        dialogContext,
+                                                        true,
+                                                      ),
+                                                      child: const Text(
+                                                        'Delete',
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                              );
+
+                                              if (confirmed != true ||
+                                                  !context.mounted) {
+                                                return;
+                                              }
+
+                                              final messenger =
+                                                  ScaffoldMessenger.of(context);
+
+                                              try {
+                                                if (FirebaseAuth.instance
+                                                        .currentUser?.uid !=
+                                                    user.uid) {
+                                                  messenger.showSnackBar(
+                                                    const SnackBar(
+                                                      content: Text(
+                                                        'Your account changed. '
+                                                        'Reopen report history.',
+                                                      ),
+                                                    ),
+                                                  );
+                                                  return;
+                                                }
+
+                                                await document.reference
+                                                    .delete();
+
+                                                if (!context.mounted) return;
+
+                                                messenger.showSnackBar(
+                                                  const SnackBar(
+                                                    content: Text(
+                                                      'Report deleted.',
+                                                    ),
+                                                  ),
+                                                );
+                                              } catch (_) {
+                                                if (!context.mounted) return;
+
+                                                messenger.showSnackBar(
+                                                  const SnackBar(
+                                                    content: Text(
+                                                      'Could not confirm deletion. '
+                                                      'Check your connection '
+                                                      'and report history.',
+                                                    ),
+                                                  ),
+                                                );
+                                              }
+                                            },
                                         ),
                                       ],
                                     ),
