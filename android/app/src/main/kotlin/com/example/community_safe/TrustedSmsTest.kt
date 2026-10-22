@@ -171,7 +171,8 @@ object TrustedSmsTest {
         fun sendSos(
             activity: Activity,
             contacts: List<Map<String, String>>,
-            result: io.flutter.plugin.common.MethodChannel.Result
+            result: io.flutter.plugin.common.MethodChannel.Result,
+            senderName: String = ""
         ) {
             if (
                 activity.checkSelfPermission(Manifest.permission.SEND_SMS) !=
@@ -266,8 +267,20 @@ object TrustedSmsTest {
                     "Location unavailable. Please contact me urgently."
                 }
 
+                val safeName = senderName
+                    .replace(Regex("[\\r\\n]+"), " ")
+                    .trim()
+                    .take(121)
+
+                val identityLine = if (safeName.isNotEmpty()) {
+                    "From: $safeName\n"
+                } else {
+                    ""
+                }
+
                 val message =
                     "COMMUNITY SAFE SOS\n" +
+                    identityLine +
                     "I need urgent help. Please call me and help arrange assistance.\n" +
                     locationDetails
 

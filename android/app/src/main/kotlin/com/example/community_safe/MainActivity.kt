@@ -43,7 +43,9 @@ class MainActivity : FlutterActivity() {
                         call.argument<List<Map<String, String>>>("contacts")
                             ?: emptyList()
 
-                    TrustedSmsTest.sendSos(this, contacts, result)
+                    val senderName = call.argument<String>("senderName").orEmpty()
+
+                    TrustedSmsTest.sendSos(this, contacts, result, senderName)
                 }
 
                 else -> result.notImplemented()

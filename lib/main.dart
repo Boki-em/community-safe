@@ -148,6 +148,40 @@ class HomeScreen extends StatelessWidget {
         ),
       );
 
+      String senderName = '';
+
+      final profileUser = FirebaseAuth.instance.currentUser;
+
+      if (profileUser != null) {
+        try {
+          final profile = await FirebaseFirestore.instance
+              .collection('users')
+              .doc(profileUser.uid)
+              .collection('profile')
+              .doc('details')
+              .get()
+              .timeout(const Duration(seconds: 2));
+
+          final data = profile.data();
+
+          if (FirebaseAuth.instance.currentUser?.uid == profileUser.uid &&
+              data != null) {
+            final preferred =
+                (data['preferredName'] as String? ?? '').trim();
+            final firstName =
+                (data['firstName'] as String? ?? '').trim();
+            final surname =
+                (data['surname'] as String? ?? '').trim();
+
+            senderName = preferred.isNotEmpty
+                ? preferred
+                : '$firstName $surname'.trim();
+          }
+        } catch (_) {
+          // Send the usual SOS even when the profile cannot be loaded.
+        }
+      }
+
       final response = await const MethodChannel('community_safe/sms')
           .invokeMapMethod<String, dynamic>(
         'sendSos',
@@ -250,6 +284,18 @@ class HomeScreen extends StatelessWidget {
         title: const Text('Community Safe'),
         centerTitle: true,
         actions: [
+          IconButton(
+            tooltip: 'My profile',
+            icon: const Icon(Icons.person_outline),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const UserProfileScreen(),
+                ),
+              );
+            },
+          ),
           IconButton(
             tooltip: 'Sign out',
             icon: const Icon(Icons.logout),
@@ -391,7 +437,9 @@ class HomeScreen extends StatelessWidget {
                         await const MethodChannel('community_safe/sms')
                             .invokeMethod<void>(
                           'showTrustedSmsTest',
-                          {'contacts': contacts},
+                          {
+                            'contacts': contacts,
+                          },
                         );
                       } catch (_) {
                         if (!context.mounted) return;
@@ -1961,7 +2009,7 @@ class _PinGateState extends State<PinGate>
       // any open report or contact screen as well.
       return Navigator(
         onGenerateRoute: (_) => MaterialPageRoute<void>(
-          builder: (_) => const HomeScreen(),
+          builder: (_) => const ProfileSetupGate(),
         ),
       );
     }
@@ -2917,6 +2965,370 @@ class ReportHistoryScreen extends StatelessWidget {
             );
           },
         ),
+      ),
+    );
+  }
+}
+class ProfileSetupGate extends StatefulWidget {
+  const ProfileSetupGate({super.key});
+
+  @override
+  State<ProfileSetupGate> createState() => _ProfileSetupGateState();
+}
+
+class _ProfileSetupGateState extends State<ProfileSetupGate> {
+  late final Future<bool> _needsSetup;
+
+  @override
+  void initState() {
+    super.initState();
+    _needsSetup = _checkProfile();
+  }
+
+  Future<bool> _checkProfile() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return false;
+
+    try {
+      final document = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .collection('profile')
+          .doc('details')
+          .get()
+          .timeout(const Duration(seconds: 5));
+
+      return !document.exists;
+    } catch (_) {
+      // Profile loading must not prevent access to safety tools.
+      return false;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<bool>(
+      future: _needsSetup,
+      builder: (context, snapshot) {
+        // Keep SOS available while checking the profile.
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const HomeScreen();
+        }
+
+        if (snapshot.data == true) {
+          return UserProfileScreen(
+            initialSetup: true,
+            onFinished: () {
+              if (mounted) {
+                Navigator.of(context).pushReplacement(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const HomeScreen(),
+                  ),
+                );
+              }
+            },
+          );
+        }
+
+        return const HomeScreen();
+      },
+    );
+  }
+}
+
+class UserProfileScreen extends StatefulWidget {
+  const UserProfileScreen({
+    super.key,
+    this.initialSetup = false,
+    this.onFinished,
+  });
+
+  final bool initialSetup;
+  final VoidCallback? onFinished;
+
+  @override
+  State<UserProfileScreen> createState() => _UserProfileScreenState();
+}
+
+class _UserProfileScreenState extends State<UserProfileScreen> {
+  final _formKey = GlobalKey<FormState>();
+  final _firstName = TextEditingController();
+  final _surname = TextEditingController();
+  final _preferredName = TextEditingController();
+  final _phone = TextEditingController();
+
+  late final String? _userId;
+  bool _loading = true;
+  bool _saving = false;
+  bool _loadFailed = false;
+  String? _error;
+
+  DocumentReference<Map<String, dynamic>> get _profile =>
+      FirebaseFirestore.instance
+          .collection('users')
+          .doc(_userId!)
+          .collection('profile')
+          .doc('details');
+
+  @override
+  void initState() {
+    super.initState();
+    _userId = FirebaseAuth.instance.currentUser?.uid;
+    _loadProfile();
+  }
+
+  @override
+  void dispose() {
+    _firstName.dispose();
+    _surname.dispose();
+    _preferredName.dispose();
+    _phone.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadProfile() async {
+    setState(() {
+      _loading = true;
+      _loadFailed = false;
+      _error = null;
+    });
+
+    try {
+      if (_userId == null) {
+        throw StateError('Not signed in');
+      }
+
+      final document = await _profile
+          .get()
+          .timeout(const Duration(seconds: 10));
+
+      if (!mounted) return;
+
+      if (FirebaseAuth.instance.currentUser?.uid != _userId) {
+        throw StateError('Account changed');
+      }
+
+      final data = document.data() ?? <String, dynamic>{};
+      _firstName.text = data['firstName'] as String? ?? '';
+      _surname.text = data['surname'] as String? ?? '';
+      _preferredName.text = data['preferredName'] as String? ?? '';
+      _phone.text = data['phone'] as String? ?? '';
+    } catch (_) {
+      if (!mounted) return;
+      _loadFailed = true;
+      _error = 'Could not load your profile. Try again, '
+          'or return to the safety tools.';
+    } finally {
+      if (mounted) {
+        setState(() => _loading = false);
+      }
+    }
+  }
+
+  void _finish() {
+    if (widget.onFinished != null) {
+      widget.onFinished!();
+    } else {
+      Navigator.of(context).pop();
+    }
+  }
+
+  Future<void> _saveProfile() async {
+    if (_saving || _loadFailed) return;
+    if (!_formKey.currentState!.validate()) return;
+
+    if (_userId == null ||
+        FirebaseAuth.instance.currentUser?.uid != _userId) {
+      setState(() => _error = 'Please sign in again.');
+      return;
+    }
+
+    FocusScope.of(context).unfocus();
+
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+
+    try {
+      await _profile.set({
+        'firstName': _firstName.text.trim(),
+        'surname': _surname.text.trim(),
+        'preferredName': _preferredName.text.trim(),
+        'phone': _phone.text.trim(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true)).timeout(
+        const Duration(seconds: 10),
+      );
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Profile saved.')),
+      );
+      _finish();
+    } catch (_) {
+      if (!mounted) return;
+
+      setState(() {
+        _error = 'Could not confirm that your profile synced. '
+            'Check your connection and Firestore permissions. '
+            'A pending save may sync when you reconnect.';
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _saving = false);
+      }
+    }
+  }
+
+  Widget _nameField({
+    required TextEditingController controller,
+    required String label,
+    bool requiredField = false,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: TextFormField(
+        controller: controller,
+        enabled: !_saving,
+        maxLength: 60,
+        textCapitalization: TextCapitalization.words,
+        decoration: InputDecoration(
+          labelText: label,
+          border: const OutlineInputBorder(),
+          counterText: '',
+        ),
+        validator: (value) {
+          if (requiredField && (value ?? '').trim().isEmpty) {
+            return 'Please enter your first name.';
+          }
+          return null;
+        },
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(
+          widget.initialSetup ? 'Set up your profile' : 'My profile',
+        ),
+        actions: [
+          if (widget.initialSetup)
+            TextButton(
+              onPressed: _saving ? null : _finish,
+              child: const Text('Skip for now'),
+            ),
+        ],
+      ),
+      body: SafeArea(
+        child: _loading
+            ? Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const CircularProgressIndicator(),
+                    const SizedBox(height: 16),
+                    TextButton(
+                      onPressed: _finish,
+                      child: const Text('Return to safety tools'),
+                    ),
+                  ],
+                ),
+              )
+            : SingleChildScrollView(
+                padding: const EdgeInsets.all(24),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 500),
+                    child: Form(
+                      key: _formKey,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          const Text(
+                            'Only your first name is required to save '
+                            'a profile. Other details are optional. '
+                            'Your profile is saved to your account.',
+                          ),
+                          const SizedBox(height: 24),
+                          if (_error != null) ...[
+                            Text(
+                              _error!,
+                              style: TextStyle(
+                                color: Theme.of(context).colorScheme.error,
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                          ],
+                          if (_loadFailed)
+                            OutlinedButton(
+                              onPressed: _loadProfile,
+                              child: const Text('Retry loading profile'),
+                            )
+                          else ...[
+                            _nameField(
+                              controller: _firstName,
+                              label: 'First name *',
+                              requiredField: true,
+                            ),
+                            _nameField(
+                              controller: _surname,
+                              label: 'Surname (optional)',
+                            ),
+                            _nameField(
+                              controller: _preferredName,
+                              label: 'Preferred name (optional)',
+                            ),
+                            TextFormField(
+                              controller: _phone,
+                              enabled: !_saving,
+                              keyboardType: TextInputType.phone,
+                              maxLength: 25,
+                              decoration: const InputDecoration(
+                                labelText: 'Phone number (optional)',
+                                hintText: '0821234567 or +27821234567',
+                                border: OutlineInputBorder(),
+                              ),
+                              validator: (value) {
+                                final number = (value ?? '').trim();
+                                if (number.isEmpty) return null;
+
+                                final compact = number.replaceAll(
+                                  RegExp(r'[\s()\-]'),
+                                  '',
+                                );
+
+                                if (!RegExp(r'^\+?[0-9]{7,15}$')
+                                    .hasMatch(compact)) {
+                                  return 'Enter a valid phone number.';
+                                }
+                                return null;
+                              },
+                            ),
+                            const SizedBox(height: 24),
+                            FilledButton.icon(
+                              onPressed: _saving ? null : _saveProfile,
+                              icon: const Icon(Icons.save_outlined),
+                              label: Text(
+                                _saving ? 'Saving…' : 'Save profile',
+                              ),
+                            ),
+                          ],
+                          const SizedBox(height: 12),
+                          TextButton(
+                            onPressed: _saving ? null : _finish,
+                            child: const Text('Return to safety tools'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
       ),
     );
   }
