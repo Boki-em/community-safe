@@ -41,10 +41,63 @@ class CommunitySafeApp extends StatelessWidget {
   }
 }
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  static const MethodChannel _volumeChannel =
+      MethodChannel('community_safe/volume');
+
   static bool _sosInProgress = false;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _volumeChannel.setMethodCallHandler(_handleVolumeCall);
+    _setVolumeTriggerEnabled(true);
+  }
+
+  Future<void> _setVolumeTriggerEnabled(bool enabled) async {
+    try {
+      await _volumeChannel.invokeMethod<void>(
+        'setEnabled',
+        {'enabled': enabled},
+      );
+    } on MissingPluginException {
+      // Not available on web or until Android is rebuilt.
+      debugPrint('Volume SOS requires the rebuilt Android app.');
+    } on PlatformException catch (error) {
+      debugPrint('Could not configure Volume SOS: ${error.message}');
+    }
+  }
+
+  Future<dynamic> _handleVolumeCall(MethodCall call) async {
+    if (call.method != 'volumeSos') return null;
+
+    if (!mounted ||
+        WidgetsBinding.instance.lifecycleState !=
+            AppLifecycleState.resumed ||
+        ModalRoute.of(context)?.isCurrent != true ||
+        FirebaseAuth.instance.currentUser == null ||
+        _sosInProgress) {
+      return null;
+    }
+
+    await showSosDialog(context);
+    return null;
+  }
+
+  @override
+  void dispose() {
+    _volumeChannel.setMethodCallHandler(null);
+    _setVolumeTriggerEnabled(false);
+    super.dispose();
+  }
 
   void showDemoMessage(BuildContext context, String feature) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -185,7 +238,10 @@ class HomeScreen extends StatelessWidget {
       final response = await const MethodChannel('community_safe/sms')
           .invokeMapMethod<String, dynamic>(
         'sendSos',
-        {'contacts': contacts},
+        {
+          'contacts': contacts,
+          'senderName': senderName,
+        },
       );
 
       if (response == null) {

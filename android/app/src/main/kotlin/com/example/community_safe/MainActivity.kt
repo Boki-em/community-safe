@@ -12,11 +12,104 @@ import android.widget.Toast
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import android.os.Handler
+import android.os.Looper
+import android.view.KeyEvent
 
 class MainActivity : FlutterActivity() {
 
+        private val volumeHandler = Handler(Looper.getMainLooper())
+        private var volumeChannel: MethodChannel? = null
+        private var volumeDownHeld = false
+        private var volumeTriggered = false
+        private var volumeSosEnabled = false
+
+        private val volumeHoldAction = Runnable {
+            if (
+                volumeSosEnabled &&
+                volumeDownHeld &&
+                !volumeTriggered &&
+                hasWindowFocus()
+            ) {
+                volumeTriggered = true
+                volumeChannel?.invokeMethod("volumeSos", null)
+            }
+        }
+
+        private fun resetVolumeHold() {
+            volumeHandler.removeCallbacks(volumeHoldAction)
+            volumeDownHeld = false
+            volumeTriggered = false
+        }
+
+        override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+            if (event.keyCode != KeyEvent.KEYCODE_VOLUME_DOWN) {
+                return super.dispatchKeyEvent(event)
+            }
+
+            if (!volumeSosEnabled) {
+                return super.dispatchKeyEvent(event)
+            }
+
+            when (event.action) {
+                KeyEvent.ACTION_DOWN -> {
+                    if (event.repeatCount == 0 && !volumeDownHeld) {
+                        volumeDownHeld = true
+                        volumeTriggered = false
+                        volumeHandler.postDelayed(volumeHoldAction, 5_000L)
+                    }
+                    return true
+                }
+
+                KeyEvent.ACTION_UP -> {
+                    resetVolumeHold()
+                    return true
+                }
+            }
+
+            return super.dispatchKeyEvent(event)
+        }
+
+        override fun onWindowFocusChanged(hasFocus: Boolean) {
+            super.onWindowFocusChanged(hasFocus)
+            if (!hasFocus) {
+                resetVolumeHold()
+            }
+        }
+
+        override fun onPause() {
+            resetVolumeHold()
+            super.onPause()
+        }
+
+        override fun onDestroy() {
+            resetVolumeHold()
+            volumeChannel?.setMethodCallHandler(null)
+            volumeChannel = null
+            super.onDestroy()
+        }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+
+                volumeChannel = MethodChannel(
+                    flutterEngine.dartExecutor.binaryMessenger,
+                    "community_safe/volume"
+                )
+
+                volumeChannel?.setMethodCallHandler { call, result ->
+                    when (call.method) {
+                        "setEnabled" -> {
+                            volumeSosEnabled =
+                                call.argument<Boolean>("enabled") ?: false
+
+                            resetVolumeHold()
+                            result.success(null)
+                        }
+
+                        else -> result.notImplemented()
+                    }
+                }
 
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
