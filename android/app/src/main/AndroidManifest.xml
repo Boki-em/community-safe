@@ -10,10 +10,13 @@
 
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
     <application
         android:label="community_safe"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:allowBackup="false">
 
         <activity
             android:name=".MainActivity"
@@ -38,6 +41,7 @@
         <receiver
             android:name=".SafetyCheckInReceiver"
             android:exported="false" />
+
 
         <service
             android:name=".SosTileService"

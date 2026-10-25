@@ -15,8 +15,22 @@ import io.flutter.plugin.common.MethodChannel
 import android.os.Handler
 import android.os.Looper
 import android.view.KeyEvent
+import android.view.WindowManager
+import android.content.Intent
 
 class MainActivity : FlutterActivity() {
+
+            private val vaultFilePicker by lazy { VaultFilePicker(this) }
+
+            @Deprecated("Uses Android activity-result compatibility")
+            override fun onActivityResult(
+                requestCode: Int,
+                resultCode: Int,
+                data: Intent?
+            ) {
+                super.onActivityResult(requestCode, resultCode, data)
+                vaultFilePicker.onActivityResult(requestCode, resultCode, data)
+            }
 
         private val volumeHandler = Handler(Looper.getMainLooper())
         private var volumeChannel: MethodChannel? = null
@@ -87,10 +101,42 @@ class MainActivity : FlutterActivity() {
             volumeChannel?.setMethodCallHandler(null)
             volumeChannel = null
             super.onDestroy()
+            vaultFilePicker.dispose()
         }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+
+                            MethodChannel(
+                                flutterEngine.dartExecutor.binaryMessenger,
+                                "community_safe/vault_files"
+                            ).setMethodCallHandler { call, result ->
+                                vaultFilePicker.handle(call, result)
+                            }
+                                
+
+                            MethodChannel(
+                                flutterEngine.dartExecutor.binaryMessenger,
+                                "community_safe/vault_privacy"
+                            ).setMethodCallHandler { call, result ->
+                                when (call.method) {
+                                    "enable" -> {
+                                        window.addFlags(
+                                            WindowManager.LayoutParams.FLAG_SECURE
+                                        )
+                                        result.success(null)
+                                    }
+
+                                    "disable" -> {
+                                        window.clearFlags(
+                                            WindowManager.LayoutParams.FLAG_SECURE
+                                        )
+                                        result.success(null)
+                                    }
+
+                                    else -> result.notImplemented()
+                                }
+                            }
 
                     MethodChannel(
                         flutterEngine.dartExecutor.binaryMessenger,

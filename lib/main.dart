@@ -10,6 +10,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:cryptography/cryptography.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:async';
+import 'safety_vault_screen.dart';
 
 final demoReports = ValueNotifier<List<Map<String, String>>>([]);
 final trustedContacts = ValueNotifier<List<Map<String, String>>>([]);
@@ -80,6 +81,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (call.method != 'volumeSos') return null;
 
     if (!mounted ||
+        !TickerMode.valuesOf(context).enabled ||
         WidgetsBinding.instance.lifecycleState !=
             AppLifecycleState.resumed ||
         ModalRoute.of(context)?.isCurrent != true ||
@@ -552,6 +554,23 @@ class _HomeScreenState extends State<HomeScreen> {
                     },
                     icon: const Icon(Icons.sms_outlined),
                     label: const Text('Send test SMS'),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.all(20),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const SafetyVaultScreen(),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.lock_outline),
+                    label: const Text('Safety Vault'),
                     style: OutlinedButton.styleFrom(
                       padding: const EdgeInsets.all(20),
                     ),
@@ -1897,6 +1916,7 @@ class _PinGateState extends State<PinGate>
   bool _loading = true;
   bool _busy = false;
   bool _unlocked = false;
+  bool _hasOpenedSafety = false;
   bool _storageFailed = false;
   int _lockVersion = 0;
   String? _error;
@@ -2073,6 +2093,7 @@ class _PinGateState extends State<PinGate>
 
         if (verified && version == _lockVersion) {
           _unlocked = true;
+          _hasOpenedSafety = true;
         } else if (!verified) {
           _error = nextRecord['lockedUntil'] > 0
               ? 'Too many incorrect attempts. Wait one minute.'
@@ -2100,13 +2121,36 @@ class _PinGateState extends State<PinGate>
       );
     }
 
-    if (_unlocked) {
-      // Keep safety screens inside this navigator so locking hides
-      // any open report or contact screen as well.
-      return Navigator(
-        onGenerateRoute: (_) => MaterialPageRoute<void>(
-          builder: (_) => const ProfileSetupGate(),
-        ),
+    if (_hasOpenedSafety) {
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          Offstage(
+            offstage: !_unlocked,
+            child: TickerMode(
+              enabled: _unlocked,
+              child: ExcludeFocus(
+                excluding: !_unlocked,
+                child: Navigator(
+                  onGenerateRoute: (_) => MaterialPageRoute<void>(
+                    builder: (_) => const ProfileSetupGate(),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          if (!_unlocked)
+            CalculatorScreen(
+              busy: _busy,
+              onTryPin: (digits) async {
+                _pinController.text = digits;
+                await _submitPin();
+
+                if (!mounted || _unlocked) return null;
+                return _error;
+              },
+            ),
+        ],
       );
     }
 
