@@ -92,6 +92,37 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
+                    MethodChannel(
+                        flutterEngine.dartExecutor.binaryMessenger,
+                        "community_safe/check_in"
+                    ).setMethodCallHandler { call, result ->
+                        when (call.method) {
+                            "show" -> {
+                                val contacts =
+                                    call.argument<List<Map<String, String>>>("contacts")
+                                        ?: emptyList()
+
+                                SafetyCheckIn.show(this, contacts)
+                                result.success(null)
+                            }
+
+                            "cancel" -> {
+                                try {
+                                    result.success(SafetyCheckIn.cancel(this))
+                                } catch (error: Exception) {
+                                    result.error(
+                                        "CANCEL_FAILED",
+                                        error.message,
+                                        null
+                                    )
+                                }
+                            }
+
+                            else -> result.notImplemented()
+                        }
+                    }
+            
+
                 volumeChannel = MethodChannel(
                     flutterEngine.dartExecutor.binaryMessenger,
                     "community_safe/volume"

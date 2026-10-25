@@ -10,6 +10,9 @@ import android.telephony.SubscriptionManager
 import android.widget.Toast
 import java.text.DateFormat
 import java.util.Date
+import android.content.Context
+import android.os.Handler
+import android.os.Looper
 
 object TrustedSmsTest {
 
@@ -61,32 +64,40 @@ object TrustedSmsTest {
             .show()
     }
 
-    private fun preparePreview(activity: Activity, number: String) {
+        private fun preparePreview(activity: Activity, number: String) {
         notify(activity, "Getting location for the preview...")
 
-        // The location helper waits briefly, so run off the UI thread.
         Thread {
-            val location = SosLocation.read(activity.applicationContext)
+            val message = try {
+                val location = SosLocation.read(
+                    activity.applicationContext
+                )
 
-            val message = if (location["status"] == "available") {
-                val latitude = location["latitude"]
-                val longitude = location["longitude"]
-                val accuracy =
-                    (location["accuracyMeters"] as Number).toInt()
+                if (location["status"] == "available") {
+                    val latitude = location["latitude"]
+                    val longitude = location["longitude"]
 
-                val capturedAt =
-                    (location["capturedAtMillis"] as Number).toLong()
+                    val accuracy =
+                        (location["accuracyMeters"] as Number).toInt()
 
-                val time = DateFormat.getDateTimeInstance()
-                    .format(Date(capturedAt))
+                    val capturedAt =
+                        (location["capturedAtMillis"] as Number).toLong()
 
-                "Community Safe TEST ONLY. No emergency.\n" +
-                "Location fix: $time\n" +
-                "Estimated accuracy: ${accuracy}m\n" +
-                "https://maps.google.com/?q=$latitude,$longitude"
-            } else {
+                    val time = DateFormat.getDateTimeInstance()
+                        .format(Date(capturedAt))
+
+                    "Community Safe TEST ONLY. No emergency.\n" +
+                        "Location fix: $time\n" +
+                        "Estimated accuracy: ${accuracy}m\n" +
+                        "https://maps.google.com/?q=$latitude,$longitude"
+                } else {
+                   "Location unavailable " +
+                        "(reason: ${location["status"]}). " +
+                        "Please contact me urgently." 
+                }
+            } catch (_: Exception) {
                 "Community Safe TEST ONLY. No emergency. " +
-                "Location unavailable for this test."
+                    "Location unavailable for this test."
             }
 
             activity.runOnUiThread {
@@ -167,15 +178,16 @@ object TrustedSmsTest {
         }
     }
 
-        @Suppress("DEPRECATION")
-        fun sendSos(
-            activity: Activity,
-            contacts: List<Map<String, String>>,
-            result: io.flutter.plugin.common.MethodChannel.Result,
-            senderName: String = ""
-        ) {
+            @Suppress("DEPRECATION")
+            fun sendSos(
+                context: Context,
+                contacts: List<Map<String, String>>,
+                result: io.flutter.plugin.common.MethodChannel.Result,
+                senderName: String = "",
+                checkIn: Boolean = false
+            ) {
             if (
-                activity.checkSelfPermission(Manifest.permission.SEND_SMS) !=
+                context.checkSelfPermission(Manifest.permission.SEND_SMS) !=
                 PackageManager.PERMISSION_GRANTED
             ) {
                 result.error(
@@ -225,7 +237,7 @@ object TrustedSmsTest {
                 }
 
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    activity.getSystemService(SmsManager::class.java)
+                    context.getSystemService(SmsManager::class.java)
                         .createForSubscriptionId(subscriptionId)
                 } else {
                     SmsManager.getSmsManagerForSubscriptionId(subscriptionId)
@@ -243,7 +255,10 @@ object TrustedSmsTest {
                 var locationAvailable = false
 
                 val locationDetails = try {
-                    val location = SosLocation.read(activity.applicationContext)
+                    val location = SosLocation.read(
+                        context.applicationContext,
+                        checkIn = checkIn
+)
 
                     if (location["status"] == "available") {
                         val latitude = location["latitude"]
@@ -278,11 +293,22 @@ object TrustedSmsTest {
                     ""
                 }
 
+                val heading = if (checkIn) {
+                    "COMMUNITY SAFE MISSED CHECK-IN\n"
+                } else {
+                    "COMMUNITY SAFE SOS\n"
+                }
+
+                val request = if (checkIn) {
+                    "I missed my safety check-in. Please contact me " +
+                        "and check that I'm safe.\n"
+                } else {
+                    "I need urgent help. Please call me and help " +
+                        "arrange assistance.\n"
+                }
+
                 val message =
-                    "COMMUNITY SAFE SOS\n" +
-                    identityLine +
-                    "I need urgent help. Please call me and help arrange assistance.\n" +
-                    locationDetails
+                    heading + identityLine + request + locationDetails
 
                 var submitted = 0
                 var failed = 0
@@ -307,7 +333,7 @@ object TrustedSmsTest {
                     }
                 }
 
-                activity.runOnUiThread {
+                Handler(Looper.getMainLooper()).post {
                     result.success(
                         mapOf(
                             "submitted" to submitted,

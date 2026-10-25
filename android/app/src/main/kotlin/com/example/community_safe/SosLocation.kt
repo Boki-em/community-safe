@@ -16,7 +16,11 @@ import java.util.concurrent.TimeUnit
 object SosLocation {
 
     @SuppressLint("MissingPermission")
-    fun read(context: Context): Map<String, Any> {
+    fun read(
+        context: Context,
+        checkIn: Boolean = false
+    ): Map<String, Any> {
+
         val fine = context.checkSelfPermission(
             Manifest.permission.ACCESS_FINE_LOCATION
         ) == PackageManager.PERMISSION_GRANTED
@@ -45,7 +49,7 @@ object SosLocation {
             val request = CurrentLocationRequest.Builder()
                 .setPriority(Priority.PRIORITY_HIGH_ACCURACY)
                 .setMaxUpdateAgeMillis(30_000L)
-                .setDurationMillis(10_000L)
+                .setDurationMillis(if (checkIn) 2_000L else 10_000L)
                 .build()
 
             var location = try {
@@ -54,7 +58,7 @@ object SosLocation {
                         request,
                         cancellation.token
                     ),
-                    12,
+                    if (checkIn) 3L else 12L,
                     TimeUnit.SECONDS
                 )
             } catch (_: Exception) {
@@ -69,7 +73,7 @@ object SosLocation {
                 location = try {
                     Tasks.await(
                         client.lastLocation,
-                        3,
+                        if (checkIn) 1L else 3L,
                         TimeUnit.SECONDS
                     )
                 } catch (_: Exception) {

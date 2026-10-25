@@ -382,6 +382,9 @@ class _HomeScreenState extends State<HomeScreen> {
               if (confirmed != true || !context.mounted) return;
 
               try {
+                await const MethodChannel(
+                  'community_safe/check_in',
+                ).invokeMethod<bool>('cancel');
                 await FirebaseAuth.instance.signOut();
 
                 // Clear account-specific lists held in memory.
@@ -466,6 +469,43 @@ class _HomeScreenState extends State<HomeScreen> {
                     style: FilledButton.styleFrom(
                       backgroundColor: const Color(0xFFB3261E),
                       foregroundColor: Colors.white,
+                      padding: const EdgeInsets.all(20),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+
+                  OutlinedButton.icon(
+                    onPressed: () async {
+                      final contacts = trustedContacts.value
+                          .map((contact) => <String, String>{
+                                'name': contact['name'] ?? '',
+                                'phone': contact['phone'] ?? '',
+                              })
+                          .toList();
+
+                      try {
+                        await const MethodChannel(
+                          'community_safe/check_in',
+                        ).invokeMethod<void>(
+                          'show',
+                          {'contacts': contacts},
+                        );
+                      } catch (_) {
+                        if (!context.mounted) return;
+
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'Could not open safety check-in. '
+                              'Use the rebuilt Android app.',
+                            ),
+                          ),
+                        );
+                      }
+                    },
+                    icon: const Icon(Icons.timer_outlined),
+                    label: const Text('Safety check-in'),
+                    style: OutlinedButton.styleFrom(
                       padding: const EdgeInsets.all(20),
                     ),
                   ),
