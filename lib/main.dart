@@ -14,6 +14,7 @@ import 'safety_vault_screen.dart';
 
 final demoReports = ValueNotifier<List<Map<String, String>>>([]);
 final trustedContacts = ValueNotifier<List<Map<String, String>>>([]);
+final contactLoadNotice = ValueNotifier<String?>(null);
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -425,6 +426,24 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  ValueListenableBuilder<String?>(
+                    valueListenable: contactLoadNotice,
+                    builder: (context, notice, child) {
+                      if (notice == null) {
+                        return const SizedBox.shrink();
+                      }
+
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 16),
+                        child: Card(
+                          child: Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Text(notice),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
                   const Icon(
                     Icons.shield_outlined,
                     size: 72,
@@ -2579,57 +2598,112 @@ class AccountContactsGate extends StatefulWidget {
 
 class _AccountContactsGateState extends State<AccountContactsGate> {
   bool _loading = true;
-  String? _error;
+
+  bool get _sameAccount =>
+      mounted &&
+      FirebaseAuth.instance.currentUser?.uid == widget.userId;
 
   @override
   void initState() {
     super.initState();
 
-    // Never display a previous account's in-memory data.
+    // Never reuse another account's in-memory contacts.
     trustedContacts.value = [];
     demoReports.value = [];
+    contactLoadNotice.value = null;
 
     _loadContacts();
   }
 
+  List<Map<String, String>> _readContacts(
+    QuerySnapshot<Map<String, dynamic>> snapshot,
+  ) {
+    return snapshot.docs.map((document) {
+      final data = document.data();
+
+      return <String, String>{
+        'id': document.id,
+        'name': data['name'] as String,
+        'phone': data['phone'] as String,
+      };
+    }).toList();
+  }
+
   Future<void> _loadContacts() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+    final collection = FirebaseFirestore.instance
+        .collection('users')
+        .doc(widget.userId)
+        .collection('contacts');
+
+    // First try this account's locally cached contacts.
+    try {
+      final cached = await collection
+          .get(const GetOptions(source: Source.cache))
+          .timeout(const Duration(seconds: 2));
+
+      final contacts = _readContacts(cached);
+
+      if (!_sameAccount) return;
+
+      if (contacts.isNotEmpty) {
+        trustedContacts.value = contacts;
+        contactLoadNotice.value =
+            'Using saved contacts while checking for updates. '
+            'Review recipients before sending SOS.';
+
+        setState(() {
+          _loading = false;
+        });
+      }
+    } catch (_) {
+      // A missing or unavailable cache must not block safety tools.
+    }
+
+    if (!_sameAccount) return;
 
     try {
-      final result = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(widget.userId)
-          .collection('contacts')
-          .get(const GetOptions(source: Source.server));
+      final remote = await collection
+          .get(const GetOptions(source: Source.server))
+          .timeout(const Duration(seconds: 5));
 
-      if (!mounted ||
-          FirebaseAuth.instance.currentUser?.uid != widget.userId) {
-        return;
+      final contacts = _readContacts(remote);
+
+      if (!_sameAccount) return;
+
+      // An empty server result is valid: it clears old contacts too.
+      trustedContacts.value = contacts;
+      contactLoadNotice.value = null;
+    } on FirebaseException catch (error) {
+      if (!_sameAccount) return;
+
+      if (error.code == 'permission-denied' ||
+          error.code == 'unauthenticated') {
+        trustedContacts.value = [];
+        contactLoadNotice.value =
+            'Contact access could not be verified. '
+            'Reconnect and check your account before using SOS.';
+      } else {
+        _showSavedContactNotice();
       }
-
-      trustedContacts.value = result.docs.map((document) {
-        final data = document.data();
-
-        return <String, String>{
-          'id': document.id,
-          'name': data['name'] as String,
-          'phone': data['phone'] as String,
-        };
-      }).toList();
-
-      setState(() => _loading = false);
     } catch (_) {
-      if (!mounted) return;
-
-      setState(() {
-        _loading = false;
-        _error = 'Could not load your contacts. '
-            'Check your internet connection and try again.';
-      });
+      if (!_sameAccount) return;
+      _showSavedContactNotice();
+    } finally {
+      if (_sameAccount && _loading) {
+        setState(() {
+          _loading = false;
+        });
+      }
     }
+  }
+
+  void _showSavedContactNotice() {
+    contactLoadNotice.value = trustedContacts.value.isEmpty
+        ? 'No saved contacts are available on this phone for this '
+            'account. Other safety tools remain accessible. '
+            'Reconnect to load contacts before using SOS.'
+        : 'Could not refresh contacts. Using saved contacts, which '
+            'may be out of date. Review recipients before sending SOS.';
   }
 
   @override
@@ -2640,26 +2714,6 @@ class _AccountContactsGateState extends State<AccountContactsGate> {
       );
     }
 
-    if (_error != null) {
-      return Scaffold(
-        body: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(_error!, textAlign: TextAlign.center),
-                const SizedBox(height: 16),
-                FilledButton(
-                  onPressed: _loadContacts,
-                  child: const Text('Try again'),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
     return PinGate(userId: widget.userId);
   }
 }
@@ -3473,3 +3527,4 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     );
   }
 }
+
