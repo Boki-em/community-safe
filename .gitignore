@@ -56,3 +56,7 @@ app.*.map.json
 **/*.keystore
 **/*service-account*.json
 **/*firebase-adminsdk*.json
+
+/android/key.properties
+*.jks
+*.keystore
